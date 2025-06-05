@@ -39,7 +39,7 @@ data:
           "Group": "Servers",
           "Port": 5432,
           "Username": "freeuser",
-          "Host": "postpostgresdb-slave.finance-dev.svc.cluster.local",
+          "Host": "postgresdb-slave.finance-dev.svc.cluster.local",
           "SSLMode": "prefer",
           "MaintenanceDB": "freenance"
         },
@@ -58,14 +58,28 @@ data:
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: pgadmin-backup-freenance
+  name: pgadmin-data-freenance
 spec:
+  storageClassName: local-storage
   capacity:
     storage: 100Mi
   accessModes:
   - ReadWriteOnce
   hostPath:
     path: /data/freenancePgadmin
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pgadmin-data-freenance
+  namespace: pgadmin
+spec:
+  storageClassName: local-storage
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Mi
 ---
 apiVersion: v1
 kind: Service
@@ -128,24 +142,16 @@ spec:
         - containerPort: 80
           name: pgadminport
         volumeMounts:
-        - name: pgadmin-config-freenance
+        - name: pgadmin-config
           mountPath: /pgadmin4/servers.json
           subPath: servers.json
           readOnly: true
-        - name: pgadmin-data-freenance
+        - name: pgadmin-data
           mountPath: /var/lib/pgadmin/
       volumes:
-      - name: pgadmin-config-freenance
+      - name: pgadmin-config
         configMap:
           name: pgadmin-config-freenance
-      - name: pgadmin-data-freenance
+      - name: pgadmin-data
         persistentVolumeClaim:
           claimName: pgadmin-data-freenance
-  volumeClaimTemplates:
-  - metadata:
-      name: pgadmin-data-freenance
-    spec:
-      accessModes: [ "ReadWriteOnce" ]
-      resources:
-        requests:
-          storage: 100Mi

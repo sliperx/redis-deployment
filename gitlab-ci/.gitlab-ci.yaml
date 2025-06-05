@@ -1,0 +1,155 @@
+# test12
+stages:
+- stage_run
+- stage_send
+- stage_status
+#workflow:
+#  rules:
+#    - if: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" 
+#      when: always
+#    - when: never
+ansibleWork_job:
+  stage: stage_run
+  tags:
+  - linux-ubuntu
+  rules:
+  - if: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "master"
+  script:
+  - echo "Hello world, that in my local gitlab-runner"
+  - cat /etc/os-release
+  - |
+    set +e
+    ansible-playbook -i /etc/ansible/infra/inventory/stage.ini /etc/ansible/infra/stage.yml 
+    STATUS=$?
+    echo "STATUS=$STATUS" > status.env
+    cat status.env
+  artifacts:
+    paths:
+    - status.env
+telegramm_job:
+  stage: stage_send
+  tags:
+  - linux-ubuntu
+  rules:
+  - if: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "master"
+  dependencies:
+  - ansibleWork_job
+  script:
+  - source status.env
+  - cat status.env
+  - |
+    echo "Ansible exit code: $STATUS"
+    if [ $STATUS -eq 0 ]; then
+      echo "Ansible playbook work fine!"
+    else
+      echo "Ansible playbook have error! Exit code: $STATUS"
+      curl -s -X POST https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage \
+        -d chat_id=$TELEGRAM_CHAT_ID \
+        -d text="Ansible playbook failed with exit code: $STATUS"
+    fi
+statusEnv_job:
+  stage: stage_status
+  tags:
+  - linux-ubuntu
+  dependencies:
+  - ansibleWork_job
+  script:
+  - source status.env
+  - echo "Ansible result is STATUS=$STATUS"
+  - echo "Its bad"
+  - echo "exit 1"
+  - exit 1
+____________________________________________________________________________________________________
+
+stages:
+- stage_run
+- stage_send
+#workflow:
+#  rules:
+#    - if: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" 
+#      when: always
+
+ansibleWork_job:
+  stage: stage_run
+  tags:
+  - linux-ubuntu
+  rules:
+  - if: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"
+  script:
+  - echo "Hello world, that in my local gitlab-runner"
+  - cat /etc/os-release
+  - echo "FIRST_JOB_URL=$CI_JOB_URL" > runLogs.env
+  - ansible-playbook -i /etc/ansible/infra/inventory/stage.ini /etc/ansible/infra/stage.yml
+  artifacts:
+    paths:
+    - runLogs.env
+    when: always
+
+telegramm_job:
+  when: on_failure
+  stage: stage_send
+  tags:
+  - linux-ubuntu
+  dependencies:
+  - ansibleWork_job
+  #rules:
+  #- if: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "master"
+  script:
+  - source runLogs.env
+  - |
+    echo "Ansible playbook have error"
+    curl -s -X POST https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage \
+      -d chat_id=$TELEGRAM_CHAT_ID \
+      -d text="Ansible playbook failed. See logs: $FIRST_JOB_URL"
+
+____________________________________________________________________________________________________
+
+# Telegram notification pipeline
+stages:
+  - stage_send
+
+telegramm_job:
+  stage: stage_send
+  tags:
+    - linux-ubuntu
+  script:
+    - echo "Ansible playbook have error"
+    - echo "LOG_LINK=$LOG_LINK"
+    - |    
+      curl -s -X POST https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage \
+        -d chat_id=$TELEGRAM_CHAT_ID \
+        -d text="Ansible playbook failed. See logs: $LOG_LINK"
+
+
+# ansible run pipeline
+
+stages:
+  - stage_run
+  - stage_send
+
+ansibleRun_job:
+  stage: stage_run
+  tags:
+    - linux-ubuntu
+  script:
+    - echo "Hello world, that in my local gitlab-runner"
+    - cat /etc/os-release
+    - echo "LOG_LINK=${CI_JOB_URL}" > runLogs.env
+    - ansible-playbook -i /etc/ansible/infra/inventory/stage.ini /etc/ansible/infra/stage.yml
+  artifacts:
+    reports:
+      dotenv: runLogs.env
+  when: always
+
+trigger_telegram_job:
+  stage: stage_send
+  needs:
+    - job: ansibleRun_job
+      artifacts: true
+  trigger:
+    project: root/telegram-notification
+    branch: main
+    strategy: depend
+    forward:
+      pipeline_variables: true
+  when: on_failure
